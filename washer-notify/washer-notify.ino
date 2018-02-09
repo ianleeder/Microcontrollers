@@ -151,6 +151,29 @@ void testGet() {
   Serial.printf("Second try: %s\n", http.errorToString(httpCode).c_str());
 }
 
+void testHttps() {
+  const char* certFingerprint = "73 11 35 12 67 DE 95 C6 A7 49 E6 64 43 9E 00 9F 10 56 2D 95";
+  const char* url = "https://www.google.com.au";
+  
+  HTTPClient http;
+  http.begin(url, certFingerprint);
+
+  int httpCode = http.GET();
+  Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
+  
+  if(httpCode > 0) {
+    // file found at server
+    if(httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      Serial.println(payload);
+    }
+  } else {
+      Serial.printf("[HTTPS] GET... failed, error code: %d\n", httpCode);
+      Serial.printf("[HTTPS] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+  }
+  http.end();
+}
+
 void test() {
   // Connect Wifi
   Serial.println("Initialising wifi");
@@ -169,7 +192,7 @@ void test() {
   Serial.print("Gateway: ");
   Serial.println(WiFi.gatewayIP());
 
-  //testGet();
+  testHttps();
   
   WiFi.disconnect();
 }
