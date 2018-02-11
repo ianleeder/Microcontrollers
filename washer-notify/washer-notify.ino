@@ -82,6 +82,7 @@ void loop() {
 void sendDoneNotification() {
   // Connect wifi
   Serial.println("Initialising wifi");
+  WiFi.hostname("WasherNotify");
   WiFi.begin(WIFI_SSID, WIFI_KEY);
   
   while((WiFi.status() != WL_CONNECTED)) {
@@ -125,12 +126,100 @@ void getFromIfttt() {
 }
 
 void postToPushOver() {
-  HTTPClient http;
-  http.begin("https://api.pushover.net/1/messages.json");
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  http.POST("token=APP_TOKEN&user=USER_TOKEN&message=Washing+machine+finished");
-  http.writeToStream(&Serial);
-  http.end();
+  // https://github.com/esp8266/Arduino/blob/master/libraries/ESP8266WiFi/examples/HTTPSRequest/HTTPSRequest.ino
+  const char* host = "api.pushover.net";
+  const char* certFingerprint = "1E D5 B7 68 BB 25 AD A3 E0 96 78 A4 68 48 08 4F 07 E4 8D AB";
+  String url = "/1/messages.json";
+  WiFiClientSecure client;
+
+  Serial.print("Connecting to ");
+  Serial.println(host);
+
+  if (! client.connect(host, 443)) {
+    Serial.println("Connection failed. Halting execution.");
+    while(1);
+  }
+
+  if (!client.verify(certFingerprint, host)) {
+    Serial.println("Connection insecure! Halting execution.");
+    while(1);
+  }
+
+  Serial.println("Connection secure.");
+
+  String content = String("user=") + PUSHOVER_USER_TOKEN + "&" +
+               "token=" + PUSHOVER_API_TOKEN + "&" +
+               "message=Washing+done!\r\n";
+
+  int len = content.length();
+  Serial.println("Length: ");
+  Serial.println(len);
+  
+  String post = String("POST ") + url + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               //"User-Agent: BuildFailureDetectorESP8266\r\n" +
+               "Content-Type: application/x-www-form-urlencoded\r\n" + 
+               "Cache-Control: no-cache\r\n" +
+               "Postman-Token: ac310ab9-9cc5-89fe-ad8f-5194e085e5a9\r\n\r\n" +
+               "user=" + PUSHOVER_USER_TOKEN + "&" +
+               "token=" + PUSHOVER_API_TOKEN + "&" +
+               "message=Washing+done!\r\n\r\n";// +
+               //"Connection: close\r\n\r\n";
+
+  
+
+  Serial.println("Sending:");
+  Serial.println(post);
+
+  client.print(post);
+
+  while (client.connected()) {
+    String line = client.readStringUntil('\n');
+    Serial.println(line);
+    if (line == "\r") {
+      Serial.println("headers received");
+      break;
+    }
+  }
+  String line = client.readStringUntil('\n');
+  
+  Serial.println("reply was:");
+  Serial.println("==========");
+  Serial.println(line);
+  Serial.println("==========");
+  Serial.println("closing connection");
+}
+
+void postToPushOver2(String message) {
+  // http://blog.discoverthat.co.uk/2017/05/use-pushover-notification-with-esp8266.html
+  
+  // Pushover requires encrypted messages when sending to groups or anyone other
+  // than the owner of the app
+  WiFiClientSecure https;
+  // Form the string
+  String parameters = String("token=") + PUSHOVER_API_TOKEN + "&user=" + PUSHOVER_USER_TOKEN + "&message=" + message;
+  int length = parameters.length();
+  if (https.connect("api.pushover.net", 443)) {
+    Serial.println("Start posting notification: " + parameters);
+    https.println("POST /1/messages.json HTTP/1.1");
+    https.println("Host: api.pushover.net");
+    https.println("Connection: close\r\nContent-Type: application/x-www-form-urlencoded");
+    https.print("Content-Length: ");
+    https.print(length);
+    https.println("\r\n");
+    https.print(parameters);
+    // ==
+    // Reply from the server:
+    while(https.connected()) {
+      while(https.available()) {
+        char ch = https.read();
+        Serial.write(ch);
+      }
+    }
+    // ==
+    https.stop();
+    Serial.println("Finished posting notification.");
+  }
 }
 
 void testGet() {
@@ -174,6 +263,73 @@ void testHttps() {
   http.end();
 }
 
+void testHttps2() {
+  const char* host = "www.google.com.au";
+  const char* certFingerprint = "73 11 35 12 67 DE 95 C6 A7 49 E6 64 43 9E 00 9F 10 56 2D 95";
+  WiFiClientSecure client;
+
+  Serial.print("Connecting to ");
+  Serial.println(host);
+  Serial.println(certFingerprint);
+
+  if (! client.connect(host, 443)) {
+    Serial.println("Connection failed. Halting execution.");
+    while(1);
+  }
+
+  if (client.verify(certFingerprint, host)) {
+    Serial.println("Connection secure.");
+  } else {
+    Serial.println("Connection insecure! Halting execution.");
+    while(1);
+  }
+}
+
+void testHttps3() {
+  const char* host = "io.adafruit.com";
+  const char* certFingerprint = "77 00 54 2D DA E7 D8 03 27 31 23 99 EB 27 DB CB A5 4C 57 18";
+  WiFiClientSecure client;
+
+  Serial.print("Connecting to ");
+  Serial.println(host);
+
+  if (! client.connect(host, 443)) {
+    Serial.println("Connection failed. Halting execution.");
+    while(1);
+  }
+
+  if (client.verify(certFingerprint, host)) {
+    Serial.println("Connection secure.");
+  } else {
+    Serial.println("Connection insecure! Halting execution.");
+    while(1);
+  }
+}
+
+void testHttps4() {
+  const char* host = "api.pushover.net";
+  const char* certFingerprint = "1E D5 B7 68 BB 25 AD A3 E0 96 78 A4 68 48 08 4F 07 E4 8D AB";
+  WiFiClientSecure client;
+
+  Serial.print("Connecting to ");
+  Serial.println(host);
+
+  if (! client.connect(host, 443)) {
+    Serial.println("Connection failed. Halting execution.");
+    while(1);
+  }
+
+  if (!client.verify(certFingerprint, host)) {
+    Serial.println("Connection insecure! Halting execution.");
+    while(1);
+  }
+
+  Serial.println("Connection secure.");
+
+
+  
+}
+
 void test() {
   // Connect Wifi
   Serial.println("Initialising wifi");
@@ -185,14 +341,14 @@ void test() {
   }
   Serial.println("");
   Serial.println("WiFi connected");  
-  Serial.println("IP address: ");
+  Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
   Serial.print("Netmask: ");
   Serial.println(WiFi.subnetMask());
   Serial.print("Gateway: ");
   Serial.println(WiFi.gatewayIP());
 
-  testHttps();
+  postToPushOver2("Test from ESP8266");
   
   WiFi.disconnect();
 }
