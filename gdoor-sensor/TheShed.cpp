@@ -77,7 +77,20 @@ void TheShed::disconnectWifi() {
 
 void TheShed::getTimeFromNtp(char* buf) {
   checkWifi();
-  time_t utcTime = getNtpTime();
+  int retries = 3;
+  int i = 0;
+  time_t utcTime = 0;
+  while (utcTime == 0 && i < retries) {
+    Serial.println("Trying to fetch NTP time");
+    utcTime = getNtpTime();
+    i++;
+  }
+
+  if(utcTime == 0) {
+    sprintf(buf, "Failed to fetch NTP time");
+    return;
+  }
+  
   TimeChangeRule *tcr;
   time_t localTime = ausET->toLocal(utcTime, &tcr);
   sprintf(buf, "%d-%02d-%02d %02d:%02d:%02d %s (UTC%+d)", year(localTime), month(localTime), day(localTime), hour(localTime), minute(localTime), second(localTime), tcr->abbrev, tcr->offset/60);
@@ -109,7 +122,7 @@ void TheShed::printWifiDetails() {
 time_t TheShed::getNtpTime()
 {
   while (udp.parsePacket() > 0) ; // discard any previously received packets
-  Serial.println("Transmit NTP Request");
+  //Serial.println("Transmit NTP Request");
   sendNTPpacket(ntpServerIP);
   uint32_t beginWait = millis();
   while (millis() - beginWait < 1500) {
