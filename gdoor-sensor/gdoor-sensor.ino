@@ -1,9 +1,7 @@
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-#include <EasyNTPClient.h>
-#include <WiFiUdp.h>
-#include <ArduinoJson.h>
+#include <PubSubClient.h>
 #include "config.h"
+#include "TheShed.h"
 
 #define SECOND 1000
 
@@ -51,37 +49,31 @@ const byte closePin = D2;
 
 const char mqttServer[] = "192.168.4.20";
 const char mqttTopic[] = "gdoor";
+const char wifiHostname[] = "gdoor-sensor";
 
 volatile byte previousDoorState = 0;
 volatile byte doorState = 0;
 volatile bool publishChange = false;
 
+WiFiClient espClient;
+PubSubClient mqtt(espClient);
+
 void setup() {
   Serial.begin(115200);
   delay(500);
 
-  printMacAddress();
-  
-  // Connect wifi
-  Serial.println("Initialising wifi");
-  WiFi.hostname("gdoor-sensor");
-  WiFi.begin(WIFI_SSID, WIFI_KEY);
+  TheShed shedWifi(WIFI_SSID, WIFI_KEY, wifiHostname);
+  shedWifi.connectWifi();
 
-  while ((WiFi.status() != WL_CONNECTED)) {
-    delay(100);
-    Serial.print(".");
-  }
-  Serial.println();
-  Serial.println("WiFi connected");
-  Serial.println();
-
-  // Print some helpful debug info
-  printWifiDetails();
+  // Set up MQTT
+  mqtt.setServer(mqttServer, 1883);
+  mqtt.setCallback(mqttCallback);
 
   // Set up pins
   pinMode(openPin, INPUT_PULLUP);
   pinMode(closePin, INPUT_PULLUP);
   pinMode(activatePin, OUTPUT);
+  digitalWrite(activatePin, HIGH);
 
   /*
    * 
@@ -101,11 +93,62 @@ void setup() {
 }
 
 void loop() {
+  if (!mqtt.connected()) {
+    reconnectMqtt();
+  }
+ 
   if(publishChange) {
     Serial.print("Door state changed: ");
     Serial.println(doorState);
+    publishToMqtt(doorState);
     publishChange = false;
   }
+}
+
+void publishToMqtt(byte state) {
+  // Prepare a JSON payload string
+  Serial.print("Sending state: ");
+  Serial.println(state);
+  String payload = "{";
+  payload += "\"state\":";
+  payload += state;
+  payload += "}";
+
+  // Send payload
+  char attributes[100];
+  payload.toCharArray( attributes, 100 );
+  mqtt.publish( "gdoor", attributes );
+  Serial.println( attributes );
+}
+
+void reconnectMqtt() {
+  // Loop until we're reconnected
+  while (!mqtt.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (mqtt.connect("gdoorsensor")) {
+      Serial.println("connected");
+      // ... and subscribe to topic
+      mqtt.subscribe("ledStatus");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(mqtt.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i=0;i<length;i++) {
+    char receivedChar = (char)payload[i];
+    Serial.print(receivedChar);
+  }
+  Serial.println();
 }
 
 void closeChange() {
@@ -140,50 +183,4 @@ void openChange() {
   }
 }
 
-void printMacAddress() {
-  // Code to get the unit MAC address
-  // https://techtutorialsx.com/2017/04/09/esp8266-get-mac-address/
-  // EC:FA:BC:8B:C1:8F
-  Serial.println();
-  Serial.print("MAC: ");
-  Serial.println(WiFi.macAddress());
-  Serial.println();
-}
 
-void printWifiDetails() {
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-  Serial.print("Netmask: ");
-  Serial.println(WiFi.subnetMask());
-  Serial.print("Gateway: ");
-  Serial.println(WiFi.gatewayIP());
-  Serial.println();
-}
-
-void getTimeFromNtp(char* buf) {
-  WiFiUDP udp;
-  Serial.println("Fetching time...");
-  EasyNTPClient ntpClient(udp, "pool.ntp.org", (11 * 60 * 60)); // AEDST
-
-  unsigned long unixTime = ntpClient.getUnixTime();
-  Serial.print("Unix Time (UTC+11): ");
-  Serial.println(unixTime);
-
-  Serial.printf("Local time (UTC+11):\t%d:%02d:%02d\n", getHours(unixTime), getMinutes(unixTime), getSeconds(unixTime));
-  Serial.println();
-  sprintf(buf, "%d:%02d", getHours(unixTime), getMinutes(unixTime));
-}
-
-// Helpful time conversion functions
-// https://tttapa.github.io/ESP8266/Chap15%20-%20NTP.html
-inline int getSeconds(uint32_t UNIXTime) {
-  return UNIXTime % 60;
-}
-
-inline int getMinutes(uint32_t UNIXTime) {
-  return UNIXTime / 60 % 60;
-}
-
-inline int getHours(uint32_t UNIXTime) {
-  return UNIXTime / 3600 % 24;
-}
