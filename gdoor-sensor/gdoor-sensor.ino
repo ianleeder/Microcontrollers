@@ -40,7 +40,10 @@
  * 2 - Closed
  * 3 - Opening
  * 4 - Closing
+ * 5 - Alert open
  */
+
+const char* doorStates[] = {"Unknown", "Open", "Closed", "Opening", "Closing", "ALERT OPEN"};
 
 const byte activatePin = D0;
 const byte openPin = D1;
@@ -51,9 +54,12 @@ const char mqttPubTopic[] = "gdoor";
 const char mqttSubTopic[] = "gdoor-query";
 const char wifiHostname[] = "gdoor-sensor";
 
-volatile byte previousDoorState = 0;
+const int doorMovingTimeout = 60 * 1000;    // 1 minute
+const int doorOpenTimeout = 15 * 60 * 1000; // 15 minutes
+
 volatile byte doorState = 0;
 volatile bool publishChange = false;
+unsigned long lastDoorMoveTime = 0;
 
 TheShed* shedWifi;
 
@@ -86,14 +92,38 @@ void loop() {
  
   if(publishChange) {
     Serial.print("Door state changed: ");
-    Serial.println(doorState);
+    Serial.print(doorState);
+    Serial.print(" (");
+    Serial.print(doorStates[doorState]);
+    Serial.println(")");
 
     // Send payload
     char payload[20];
-    sprintf(payload, "{\"state\":%d}", doorState);
+    sprintf(payload, "{\"state\":%d, \"description\":\"%s\"}", doorState, doorStates[doorState]);
     
     shedWifi->publishToMqtt(mqttPubTopic, payload);
     publishChange = false;
+
+    lastDoorMoveTime = millis();
+  }
+
+   // If the door was moving, and the time elapsed is greater than our timeout
+  if((doorState == 3 || doorState == 4) && (millis() - lastDoorMoveTime > doorMovingTimeout)) {
+    Serial.print("Door did not finish moving, last seen it was ");
+    Serial.println(doorStates[doorState]);
+    Serial.println("Changing state to unknown");
+    doorState = 0;
+    publishChange = true;
+  }
+
+  // If the door is open, and the time elapsed is greater than our timeout
+  if(doorState == 1 && (millis() - lastDoorMoveTime > doorOpenTimeout)) {
+    Serial.print("ALERT -- Door is left open");
+    // Reset the move timestamp so this doesn't happen every single loop (hundreds of times a second)
+    // lastDoorMoveTime = millis();
+
+    doorState = 5;
+    publishChange = true;
   }
 }
 
@@ -130,7 +160,6 @@ void closeChange() {
   // By checking if doorState != new state we do rudimentary debouncing
   // and don't publish the same message multiple times in a row
   if(doorState != newState) {
-    previousDoorState = doorState;
     doorState = newState;
     publishChange = true;
   }
@@ -146,7 +175,6 @@ void openChange() {
   // By checking if doorState != new state we do rudimentary debouncing
   // and don't publish the same message multiple times in a row
   if(doorState != newState) {
-    previousDoorState = doorState;
     doorState = newState;
     publishChange = true;
   }
