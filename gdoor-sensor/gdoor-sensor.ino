@@ -64,7 +64,7 @@ const int doorOpenTimeout = 15 * 60 * 1000; // 15 minutes
 const int debounceTime = 300;               // 300ms
 const int doorButtonPressTime = 500;        // 500ms
 
-volatile byte doorState = DOOR_UNKNOWN;
+byte doorState = DOOR_UNKNOWN;
 volatile bool closePinTriggered = false;
 volatile bool openPinTriggered = false;
 unsigned long lastDoorMoveTime = millis();
