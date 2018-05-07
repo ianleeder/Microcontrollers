@@ -2,8 +2,6 @@
 #include "config.h"
 #include "TheShed.h"
 
-#define SECOND 1000
-
 /*
  * Pin mapping image:
  * https://arduino.stackexchange.com/q/25260
@@ -43,6 +41,13 @@
  * 5 - Alert open
  */
 
+const byte DOOR_UNKNOWN = 0;
+const byte DOOR_OPEN = 1;
+const byte DOOR_CLOSED = 2;
+const byte DOOR_OPENING = 3;
+const byte DOOR_CLOSING = 4;
+const byte DOOR_ALERT = 5;
+
 const char* doorStates[] = {"Unknown", "Open", "Closed", "Opening", "Closing", "ALERT OPEN"};
 
 const byte activatePin = D0;
@@ -56,10 +61,12 @@ const char wifiHostname[] = "gdoor-sensor";
 
 const int doorMovingTimeout = 60 * 1000;    // 1 minute
 const int doorOpenTimeout = 15 * 60 * 1000; // 15 minutes
+const int debounceTime = 300;               // 300ms
 
-volatile byte doorState = 0;
-volatile bool publishChange = false;
-unsigned long lastDoorMoveTime = 0;
+volatile byte doorState = DOOR_UNKNOWN;
+volatile bool closePinTriggered = false;
+volatile bool openPinTriggered = false;
+unsigned long lastDoorMoveTime = millis();
 
 TheShed* shedWifi;
 
@@ -85,46 +92,94 @@ void setup() {
   // https://forum.arduino.cc/index.php?topic=147825.0
   attachInterrupt(digitalPinToInterrupt(closePin), closeChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(openPin), openChange, CHANGE);
+
+  // Read initial state
+  int oPin = digitalRead(openPin);
+  int cPin = digitalRead(closePin);
+  // One of these pins needs to be "closed" (0)
+  // A zero is boolean false, so !oPin means if the openPin is currently "active" (actually open)
+  if(!oPin) {
+    doorState = DOOR_OPEN;
+  } else if (!cPin) {
+    doorState = DOOR_CLOSED;
+  } else {
+    doorState = DOOR_UNKNOWN;
+  }
 }
+
+ /*
+  * Input pins are pull-up, which means they will be high unless "active"
+  * When door is closed        openPin = 1, closePin = 0
+  * When door starts opening   openPin = 1, closePin = 0->1 (closePin rising)
+  * When door completes open   openPin = 1->0, closePin = 1 (openPin falling)
+  * When door is open          openPin = 0, closePin = 1
+  * When door starts closing   openPin = 0->1, closePin = 1 (openPin rising)
+  * When door completes close  openPin = 1, closePin = 1->0 (closePin falling)
+  */
 
 void loop() {
   shedWifi->mqttLoop();
- 
-  if(publishChange) {
-    Serial.print("Door state changed: ");
-    Serial.print(doorState);
-    Serial.print(" (");
-    Serial.print(doorStates[doorState]);
-    Serial.println(")");
 
-    // Send payload
-    char payload[20];
-    sprintf(payload, "{\"state\":%d, \"description\":\"%s\"}", doorState, doorStates[doorState]);
+  if(closePinTriggered) {
+    // Debounce delay
+    delay(debounceTime);
     
-    shedWifi->publishToMqtt(mqttPubTopic, payload);
-    publishChange = false;
-
+    // Now contact has settled read current state
+    int pinState = digitalRead(closePin);
+    
+    // If pin is 1 then it was a rising transition
+    // If it has a value (1) then it will evaluate to true
+    // If closePin rising then state is opening, else closed
+    doorState = pinState ? DOOR_OPENING : DOOR_CLOSED;
+    closePinTriggered = false;
     lastDoorMoveTime = millis();
+    sendDoorState();
   }
 
+  if(openPinTriggered) {
+    // Debounce delay
+    delay(debounceTime);
+    
+    // Now contact has settled read current state
+    int pinState = digitalRead(openPin);
+    
+    // If pin is 1 then it was a rising transition
+    // If it has a value (1) then it will evaluate to true
+    // If openPin rising then state is closing, else open
+    doorState = pinState ? DOOR_CLOSING : DOOR_OPEN;
+    openPinTriggered = false;
+    sendDoorState();
+  }
+ 
    // If the door was moving, and the time elapsed is greater than our timeout
-  if((doorState == 3 || doorState == 4) && (millis() - lastDoorMoveTime > doorMovingTimeout)) {
+  if((doorState == DOOR_OPENING || doorState == DOOR_CLOSING) && (millis() - lastDoorMoveTime > doorMovingTimeout)) {
     Serial.print("Door did not finish moving, last seen it was ");
     Serial.println(doorStates[doorState]);
     Serial.println("Changing state to unknown");
     doorState = 0;
-    publishChange = true;
+    sendDoorState();
   }
 
-  // If the door is open, and the time elapsed is greater than our timeout
-  if(doorState == 1 && (millis() - lastDoorMoveTime > doorOpenTimeout)) {
+  // If the door is open or unknown, and the time elapsed is greater than our timeout
+  if((doorState == DOOR_OPEN || doorState == DOOR_UNKNOWN) && (millis() - lastDoorMoveTime > doorOpenTimeout)) {
     Serial.print("ALERT -- Door is left open");
-    // Reset the move timestamp so this doesn't happen every single loop (hundreds of times a second)
-    // lastDoorMoveTime = millis();
-
     doorState = 5;
-    publishChange = true;
+    sendDoorState();
   }
+}
+
+void sendDoorState() {
+  Serial.print("Transmitting door state: ");
+  Serial.print(doorState);
+  Serial.print(" (");
+  Serial.print(doorStates[doorState]);
+  Serial.println(")");
+
+  // Send payload
+  char payload[50];
+  sprintf(payload, "{\"state\":%d, \"description\":\"%s\"}", doorState, doorStates[doorState]);
+  
+  shedWifi->publishToMqtt(mqttPubTopic, payload);
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -136,48 +191,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.print(receivedChar);
   }
   Serial.println();
-  publishChange = true;
+  
+  // Later parse request, it could be a command to close door
+  // For now, assume all requests are queries for current state
+  sendDoorState();
 }
 
-
-  /*
-   * Input pins are pull-up, which means they will be high unless "active"
-   * When door is closed        openPin = 1, closePin = 0
-   * When door starts opening   openPin = 1, closePin = 0->1 (closePin rising)
-   * When door completes open   openPin = 1->0, closePin = 1 (openPin falling)
-   * When door is open          openPin = 0, closePin = 1
-   * When door starts closing   openPin = 0->1, closePin = 1 (openPin rising)
-   * When door completes close  openPin = 1, closePin = 1->0 (closePin falling)
-   */
-
 void closeChange() {
-  int pinState = digitalRead(closePin);
-  // If pin is 1 then it was a rising transition
-  // If it has a value (1) then it will evaluate to true
-  // If closePin rising then state is opening (3), else closed (2)
-  int newState = pinState ? 3 : 2;
-
-  // By checking if doorState != new state we do rudimentary debouncing
-  // and don't publish the same message multiple times in a row
-  if(doorState != newState) {
-    doorState = newState;
-    publishChange = true;
-  }
+  closePinTriggered = true;
 }
 
 void openChange() {
-  int pinState = digitalRead(openPin);
-  // If pin is 1 then it was a rising transition
-  // If it has a value (1) then it will evaluate to true
-  // If openPin rising then state is closing (4), else open (1)
-  int newState = pinState ? 4 : 1;
-
-  // By checking if doorState != new state we do rudimentary debouncing
-  // and don't publish the same message multiple times in a row
-  if(doorState != newState) {
-    doorState = newState;
-    publishChange = true;
-  }
+  openPinTriggered = true;
 }
-
-
