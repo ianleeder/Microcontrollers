@@ -52,6 +52,7 @@ void TheShed::connectWifi() {
   
   // Connect wifi
   Serial.println("Initialising wifi");
+  WiFi.mode(WIFI_STA);
   WiFi.begin(_ssid, _key);
 
   int i = 0;

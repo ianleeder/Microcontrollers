@@ -63,7 +63,6 @@ void setup() {
   delay(500);
 
   TheShed shedWifi(WIFI_SSID, WIFI_KEY, wifiHostname);
-  //shedWifi.connectWifi();
   char c[40];
   shedWifi.getTimeFromNtp(c);
   Serial.println("Time is: ");
@@ -72,7 +71,8 @@ void setup() {
   // Set up MQTT
   mqtt.setServer(mqttServer, 1883);
   mqtt.setCallback(mqttCallback);
-
+  
+  
   // Set up pins
   pinMode(openPin, INPUT_PULLUP);
   pinMode(closePin, INPUT_PULLUP);

@@ -90,6 +90,7 @@ void getTimeFromNtp(char* buf) {
 void sendDoneNotification() {
   // Connect wifi
   Serial.println("Initialising wifi");
+  WiFi.mode(WIFI_STA);
   WiFi.hostname("WasherNotify");
   WiFi.begin(WIFI_SSID, WIFI_KEY);
 
