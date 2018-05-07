@@ -2,6 +2,7 @@
 #include "TheShed.h"
 #include <TimeLib.h>
 #include <Timezone.h>
+#include <PubSubClient.h>
 
 unsigned int localPort = 2390; // local port to listen for UDP packets
 IPAddress ntpServerIP; // NTP server address
@@ -9,6 +10,9 @@ const char* ntpServerName = "au.pool.ntp.org";
 const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
 byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 WiFiUDP udp; // A UDP instance to let us send and receive packets over UDP
+
+WiFiClient espClient;
+PubSubClient mqtt(espClient);
 
 TheShed::TheShed(const char ssid[], const char key[], const char host[])
 {
@@ -32,6 +36,53 @@ TheShed::TheShed(const char ssid[], const char key[], const char host[])
   
   // Resolve the NTP hostname to an IP address
   WiFi.hostByName(ntpServerName, ntpServerIP);
+}
+
+void TheShed::setupMqtt(const char* deviceName, const char* server, int port, void (*callback)(char*, uint8_t*, unsigned int), const char subTopic[]) {
+  // Set up MQTT
+  mqtt.setServer(server, port);
+  mqtt.setCallback(callback);
+
+  strcpy(_mqttSub, subTopic);
+  strcpy(_mqttDeviceName, deviceName);
+  reconnectMqtt();
+}
+
+void TheShed::mqttLoop() {
+  reconnectMqtt();
+  mqtt.loop();
+}
+
+void TheShed::reconnectMqtt() {
+  // Loop until we're reconnected
+  while (!mqtt.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (mqtt.connect(_mqttDeviceName)) {
+      Serial.println("connected");
+      if(strlen(_mqttSub)){
+        mqtt.subscribe(_mqttSub);
+        Serial.print("Subscribed to topic: ");
+        Serial.println(_mqttSub);
+      }
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(mqtt.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+void TheShed::publishToMqtt(const char* topic, const char* data) {
+  reconnectMqtt();
+  // Prepare a JSON payload string
+  Serial.print("Publishing to topic: ");
+  Serial.println(topic);
+  Serial.print("Sending data: ");
+  Serial.println(data);
+  mqtt.publish( topic, data );
 }
 
 void TheShed::test() {

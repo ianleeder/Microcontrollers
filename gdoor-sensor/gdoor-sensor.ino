@@ -1,5 +1,4 @@
 #include <ESP8266WiFi.h>
-#include <PubSubClient.h>
 #include "config.h"
 #include "TheShed.h"
 
@@ -48,47 +47,33 @@ const byte openPin = D1;
 const byte closePin = D2;
 
 const char mqttServer[] = "192.168.4.20";
-const char mqttTopic[] = "gdoor";
+const char mqttPubTopic[] = "gdoor";
+const char mqttSubTopic[] = "gdoor-query";
 const char wifiHostname[] = "gdoor-sensor";
 
 volatile byte previousDoorState = 0;
 volatile byte doorState = 0;
 volatile bool publishChange = false;
 
-WiFiClient espClient;
-PubSubClient mqtt(espClient);
+TheShed* shedWifi;
 
 void setup() {
   Serial.begin(115200);
   delay(500);
 
-  TheShed shedWifi(WIFI_SSID, WIFI_KEY, wifiHostname);
+  shedWifi = new TheShed(WIFI_SSID, WIFI_KEY, wifiHostname);
   char c[40];
-  shedWifi.getTimeFromNtp(c);
+  shedWifi->getTimeFromNtp(c);
   Serial.println("Time is: ");
   Serial.println(c);
 
-  // Set up MQTT
-  mqtt.setServer(mqttServer, 1883);
-  mqtt.setCallback(mqttCallback);
-  
-  
+  shedWifi->setupMqtt(wifiHostname, mqttServer, 1883, mqttCallback, mqttSubTopic);
+
   // Set up pins
   pinMode(openPin, INPUT_PULLUP);
   pinMode(closePin, INPUT_PULLUP);
   pinMode(activatePin, OUTPUT);
   digitalWrite(activatePin, HIGH);
-
-  /*
-   * 
-   * Input pins are pull-up, which means they will be high unless "active"
-   * When door is closed        openPin = 1, closePin = 0
-   * When door starts opening   openPin = 1, closePin = 0->1 (closePin rising)
-   * When door completes open   openPin = 1->0, closePin = 1 (openPin falling)
-   * When door is open          openPin = 0, closePin = 1
-   * When door starts closing   openPin = 0->1, closePin = 1 (openPin rising)
-   * When door completes close  openPin = 1, closePin = 1->0 (closePin falling)
-   */
 
   // Can't attach two interrupts (one rising, one falling) to the same pin :(
   // https://forum.arduino.cc/index.php?topic=147825.0
@@ -97,50 +82,18 @@ void setup() {
 }
 
 void loop() {
-  if (!mqtt.connected()) {
-    reconnectMqtt();
-  }
+  shedWifi->mqttLoop();
  
   if(publishChange) {
     Serial.print("Door state changed: ");
     Serial.println(doorState);
-    publishToMqtt(doorState);
+
+    // Send payload
+    char payload[20];
+    sprintf(payload, "{\"state\":%d}", doorState);
+    
+    shedWifi->publishToMqtt(mqttPubTopic, payload);
     publishChange = false;
-  }
-}
-
-void publishToMqtt(byte state) {
-  // Prepare a JSON payload string
-  Serial.print("Sending state: ");
-  Serial.println(state);
-  String payload = "{";
-  payload += "\"state\":";
-  payload += state;
-  payload += "}";
-
-  // Send payload
-  char attributes[100];
-  payload.toCharArray( attributes, 100 );
-  mqtt.publish( "gdoor", attributes );
-  Serial.println( attributes );
-}
-
-void reconnectMqtt() {
-  // Loop until we're reconnected
-  while (!mqtt.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    if (mqtt.connect("gdoorsensor")) {
-      Serial.println("connected");
-      // ... and subscribe to topic
-      mqtt.subscribe("ledStatus");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(mqtt.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
   }
 }
 
@@ -153,7 +106,19 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.print(receivedChar);
   }
   Serial.println();
+  publishChange = true;
 }
+
+
+  /*
+   * Input pins are pull-up, which means they will be high unless "active"
+   * When door is closed        openPin = 1, closePin = 0
+   * When door starts opening   openPin = 1, closePin = 0->1 (closePin rising)
+   * When door completes open   openPin = 1->0, closePin = 1 (openPin falling)
+   * When door is open          openPin = 0, closePin = 1
+   * When door starts closing   openPin = 0->1, closePin = 1 (openPin rising)
+   * When door completes close  openPin = 1, closePin = 1->0 (closePin falling)
+   */
 
 void closeChange() {
   int pinState = digitalRead(closePin);
