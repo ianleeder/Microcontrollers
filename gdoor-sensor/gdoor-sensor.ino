@@ -62,6 +62,7 @@ const char wifiHostname[] = "gdoor-sensor";
 const int doorMovingTimeout = 60 * 1000;    // 1 minute
 const int doorOpenTimeout = 15 * 60 * 1000; // 15 minutes
 const int debounceTime = 300;               // 300ms
+const int doorButtonPressTime = 500;        // 500ms
 
 volatile byte doorState = DOOR_UNKNOWN;
 volatile bool closePinTriggered = false;
@@ -73,6 +74,8 @@ TheShed* shedWifi;
 void setup() {
   Serial.begin(115200);
   delay(500);
+  Serial.print();
+  Serial.print();
 
   shedWifi = new TheShed(WIFI_SSID, WIFI_KEY, wifiHostname);
   char c[40];
@@ -105,6 +108,9 @@ void setup() {
   } else {
     doorState = DOOR_UNKNOWN;
   }
+
+  Serial.print("Start up door state: ");
+  Serial.println(doorStates[doorState]);
 }
 
  /*
@@ -168,6 +174,12 @@ void loop() {
   }
 }
 
+void closeDoor() {
+  digitalWrite(activatePin, LOW);
+  delay(doorButtonPressTime);
+  digitalWrite(activatePin, HIGH);
+}
+
 void sendDoorState() {
   Serial.print("Transmitting door state: ");
   Serial.print(doorState);
@@ -195,6 +207,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // Later parse request, it could be a command to close door
   // For now, assume all requests are queries for current state
   sendDoorState();
+
+  // For testing only also trigger door movement every time
+  // Also needs to be authenticated
+  if(doorState != DOOR_CLOSED) {
+    closeDoor();
+  }
 }
 
 void closeChange() {
