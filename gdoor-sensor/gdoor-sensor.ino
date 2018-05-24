@@ -55,8 +55,8 @@ const byte openPin = D1;
 const byte closePin = D2;
 
 const char mqttServer[] = "192.168.4.20";
-const char mqttPubTopic[] = "gdoor";
-const char mqttSubTopic[] = "gdoor-query";
+const char mqttPubTopic[] = "home/garage/door-status";
+const char mqttSubTopic[] = "home/garage/door-query";
 const char wifiHostname[] = "gdoor-sensor";
 
 const int doorMovingTimeout = 60 * 1000;    // 1 minute
