@@ -1,4 +1,5 @@
 #include <ESP8266WiFi.h>
+#include <ArduinoOTA.h>
 #include "config.h"
 #include "TheShed.h"
 
@@ -119,6 +120,7 @@ void setup() {
   */
 
 void loop() {
+  ArduinoOTA.handle();
   shedWifi->mqttLoop();
 
   if(closePinTriggered) {
@@ -210,10 +212,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
-void closeChange() {
+// Had error "ISR not in IRAM!" during execution after upgrading ESP Core
+// Need to add ICACHE_RAM_ATTR before function as per this page:
+// https://community.blynk.cc/t/error-isr-not-in-iram/37426/13
+ICACHE_RAM_ATTR void closeChange() {
   closePinTriggered = true;
 }
 
-void openChange() {
+ICACHE_RAM_ATTR void openChange() {
   openPinTriggered = true;
 }
