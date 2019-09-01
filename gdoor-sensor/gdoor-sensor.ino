@@ -1,5 +1,6 @@
 #include <ESP8266WiFi.h>
 #include <ArduinoOTA.h>
+#include <ArduinoJson.h>
 #include "config.h"
 #include "TheShed.h"
 
@@ -57,7 +58,7 @@ const byte closePin = D2;
 
 const char mqttServer[] = "192.168.4.20";
 const char mqttPubTopic[] = "home/garage/door-status";
-const char mqttSubTopic[] = "home/garage/door-query";
+const char mqttSubTopic[] = "home/garage/door-control";
 const char wifiHostname[] = "gdoor-sensor";
 
 const int doorMovingTimeout = 60 * 1000;    // 1 minute
@@ -195,20 +196,31 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
-  for (int i=0;i<length;i++) {
-    char receivedChar = (char)payload[i];
-    Serial.print(receivedChar);
-  }
-  Serial.println();
-  
-  // Later parse request, it could be a command to close door
-  // For now, assume all requests are queries for current state
-  sendDoorState();
+  char *cstring = (char *) payload;
+  Serial.println(cstring);
 
-  // For testing only also trigger door movement every time
-  // Also needs to be authenticated
-  if(doorState != DOOR_CLOSED) {
-    closeDoor();
+  // Deserialise JSON
+  // https://arduinojson.org/v6/doc/deserialization/
+  DynamicJsonDocument doc(100);
+  DeserializationError err = deserializeJson(doc, cstring);
+
+  if (err) {
+    Serial.print(F("deserializeJson() failed with code "));
+    Serial.println(err.c_str());
+    return;
+  }
+
+  const char* name = doc["command"];
+  if (strcmp(name,"close") == 0) {
+    Serial.println("Received close command");
+    if(doorState != DOOR_CLOSED) {
+      closeDoor();
+    }
+  } else if (strcmp(name, "query") == 0) {
+    Serial.println("Received query command");
+    sendDoorState();
+  } else {
+    Serial.println("Received unknown command"); 
   }
 }
 
