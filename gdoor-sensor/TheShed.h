@@ -7,9 +7,6 @@
 
 #include "Arduino.h"
 #include <ESP8266WiFi.h>
-#include <WiFiUdp.h>
-#include <TimeLib.h>
-#include <Timezone.h>
 
 class TheShed
 {
@@ -18,7 +15,6 @@ class TheShed
     void printMacAddress();
     void printWifiDetails();
     void test();
-    void getTimeFromNtp(char* buf);
     void setupMqtt(const char* deviceName, const char* server, int port, void (*callback)(char*, uint8_t*, unsigned int), const char* subTopic = "");
     void publishToMqtt(const char* topic, const char* data);
     void mqttLoop();
@@ -27,13 +23,10 @@ class TheShed
     char _key[50];
     char _mqttSub[50];
     char _mqttDeviceName[50];
-    Timezone* ausET;
     void connectWifi();
     void disconnectWifi();
     void checkWifi();
     void reconnectMqtt();
-    time_t getNtpTime();
-    void sendNTPpacket(IPAddress &address);
 };
 
 #endif

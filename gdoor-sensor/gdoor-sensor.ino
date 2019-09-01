@@ -74,15 +74,10 @@ TheShed* shedWifi;
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.print();
-  Serial.print();
+  Serial.println();
+  Serial.println();
 
   shedWifi = new TheShed(WIFI_SSID, WIFI_KEY, wifiHostname);
-  char c[40];
-  shedWifi->getTimeFromNtp(c);
-  Serial.println("Time is: ");
-  Serial.println(c);
-
   shedWifi->setupMqtt(wifiHostname, mqttServer, 1883, mqttCallback, mqttSubTopic);
 
   // Set up pins
