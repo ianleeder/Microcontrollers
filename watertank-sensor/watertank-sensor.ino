@@ -4,12 +4,19 @@
 #include "config.h"
 #include "TheShed.h"
 
+#define TRIGGER_PIN D0
+#define ECHO_PIN D1
+
 const char mqttServer[] = "192.168.4.20";
 const char mqttPubTopic[] = "home/outside/watertank-status";
 const char mqttSubTopic[] = "home/outside/watertank-control";
 const char wifiHostname[] = "watertank-sensor";
 
-unsigned int waterLevel;
+/*
+ * Example code
+ * https://www.makerguides.com/jsn-sr04t-arduino-tutorial/
+ */
+
 TheShed* shedWifi;
 
 void setup() {
@@ -18,6 +25,11 @@ void setup() {
   Serial.println();
   Serial.println();
 
+  pinMode(TRIGGER_PIN, OUTPUT);
+  digitalWrite(TRIGGER_PIN, LOW);
+  pinMode(ECHO_PIN, INPUT);
+  
+
   shedWifi = new TheShed(WIFI_SSID, WIFI_KEY, wifiHostname);
   shedWifi->setupMqtt(wifiHostname, mqttServer, 1883, mqttCallback, mqttSubTopic);
 }
@@ -25,7 +37,35 @@ void setup() {
 void loop() {
   ArduinoOTA.handle();
   shedWifi->mqttLoop();
+
+  senseDistance();
+  delay(100);
+}
+
+void senseDistance() {
+  // Clear the TRIGGER_PIN by setting it LOW:
+  digitalWrite(TRIGGER_PIN, LOW);
   
+  delayMicroseconds(5);
+ // Trigger the sensor by setting the TRIGGER_PIN high for 10 microseconds:
+  digitalWrite(TRIGGER_PIN, HIGH);
+  delayMicroseconds(15);
+  digitalWrite(TRIGGER_PIN, LOW);
+  
+  // Read the ECHO_PIN. pulseIn() returns the duration (length of the pulse) in microseconds
+  // Datasheet indicates it could be up to 38ms if no obstable, which would be 38,000 microseconds.
+  // Max (signed) int value is 32,767
+  // Max unsigned int value is 65,535
+  unsigned int duration = pulseIn(ECHO_PIN, HIGH);
+  
+  // Calculate the distance
+  // Datasheet indicates max distance 600cm, well within bounds of (signed) int.
+  int distance = duration*0.034/2;
+  
+  // Print the distance
+  Serial.print("Distance = ");
+  Serial.print(distance);
+  Serial.println(" cm");
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -59,6 +99,7 @@ void sendLevel() {
   
   // Prepare payload
   char payload[50];
+  int waterLevel;
   sprintf(payload, "{\"level\":%d}", waterLevel);
 
   Serial.println("Transmitting machine state:");
