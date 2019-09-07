@@ -12,6 +12,21 @@ const char mqttPubTopic[] = "home/outside/watertank-status";
 const char mqttSubTopic[] = "home/outside/watertank-control";
 const char wifiHostname[] = "watertank-sensor";
 
+// This is how much water the tank holds
+const int TankCapacity = 2000;
+
+// This is the distance from sensor to the water surface when full
+const int DistanceTankFull = 30;
+
+// This is the distance from sensor to the bottom of the tank when empty
+const int DistanceTankEmpty = 150;
+
+// This is how many times we can retry for a valid distance reading before failing
+const int ValidationRetryLimit = 10;
+
+// Allow for min - 5 or max + 5 on sensor readings.
+const int SensorErrorMargin = 5;
+
 /*
  * Example code
  * https://www.makerguides.com/jsn-sr04t-arduino-tutorial/
@@ -27,7 +42,7 @@ void setup() {
 
   pinMode(TRIGGER_PIN, OUTPUT);
   digitalWrite(TRIGGER_PIN, LOW);
-  pinMode(ECHO_PIN, INPUT);
+  pinMode(ECHO_PIN, INPUT_PULLUP);
   
 
   shedWifi = new TheShed(WIFI_SSID, WIFI_KEY, wifiHostname);
@@ -37,12 +52,11 @@ void setup() {
 void loop() {
   ArduinoOTA.handle();
   shedWifi->mqttLoop();
-
-  senseDistance();
-  delay(100);
 }
 
-void senseDistance() {
+// Returns distance in centimeters
+// Raw reading from sensor
+int senseDistance() {
   // Clear the TRIGGER_PIN by setting it LOW:
   digitalWrite(TRIGGER_PIN, LOW);
   
@@ -63,9 +77,71 @@ void senseDistance() {
   int distance = duration*0.034/2;
   
   // Print the distance
-  Serial.print("Distance = ");
+  Serial.print("Raw distance = ");
   Serial.print(distance);
   Serial.println(" cm");
+
+  return distance;
+}
+
+// Returns distance in centimetres, or -1 if could not get a stable reading from ultrasonic sensor
+int getValidatedDistance() {
+  int distance = 0;
+  int retries = 0;
+  do {
+    if(retries++ >= ValidationRetryLimit)
+      return -1;
+    
+    distance = senseDistance();
+
+    // Allow for small discrepancy in reading min/max
+    if(distance > DistanceTankEmpty && distance <= (DistanceTankEmpty + SensorErrorMargin))
+      distance = DistanceTankEmpty;
+
+    if(distance < DistanceTankFull && distance >= (DistanceTankFull - SensorErrorMargin))
+      distance = DistanceTankFull;
+    
+  } while (distance < DistanceTankFull || distance > DistanceTankEmpty);
+
+  // Print the distance
+  Serial.print("Validated distance = ");
+  Serial.print(distance);
+  Serial.println(" cm");
+
+  return distance;
+}
+
+// Returns tank volume in litres, or -1 if could not get a stable reading from ultrasonic sensor
+int getWaterTankLevel() {
+  // Distance is cm from sensor.
+  int distance = getValidatedDistance();
+
+  // If we could not get a valid distance, don't attempt to return a valid level
+  if(distance == -1)
+    return -1;
+
+  // Need to convert this into litres.
+  // For now assume a linear relationship between distance and
+  // water volume (hint this is wrong, the tank is not a regular shape but it's too hard and not important).
+
+  // 20cm = full, 2000ltr
+  // 150cm = empty, 0ltr
+  // (150-20/2)+20cm = 85cm = half, 1000ltr
+
+  // Range = max dist (empty) - min dist (full) = 130cm
+  // Scale factor = (max dist - distance) / range
+  //              = (empty - distance) / (empty - full)
+  // Volume = capacity * scale factor
+  //        = 2000L * (empty - distance) / (empty - full)
+
+  // So if distance is 20cm (eg full), we get scaling factor:
+  // 150-20/150-20 = 1
+  // If distance is 150cm (eg empty):
+  // 150-150/150-20 = 0
+  // And if distance is 85cm (eg half):
+  // 150-85/150-20 = 65/130 = 0.5
+
+  return TankCapacity * (DistanceTankEmpty - distance) / (DistanceTankEmpty - DistanceTankFull);
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -96,13 +172,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void sendLevel() {
-  
   // Prepare payload
   char payload[50];
-  int waterLevel;
+  int waterLevel = getWaterTankLevel();
   sprintf(payload, "{\"level\":%d}", waterLevel);
 
-  Serial.println("Transmitting machine state:");
+  Serial.println("Transmitting tank level:");
   Serial.println(payload);
   
   shedWifi->publishToMqtt(mqttPubTopic, payload);
