@@ -152,6 +152,7 @@ void loop() {
     // If openPin rising then state is closing, else open
     doorState = pinState ? DOOR_CLOSING : DOOR_OPEN;
     openPinTriggered = false;
+    lastDoorMoveTime = millis();
     sendDoorState();
   }
  
