@@ -63,13 +63,16 @@ const char wifiHostname[] = "gdoor-sensor";
 
 const int doorMovingTimeout = 60 * 1000;    // 1 minute
 const int doorOpenTimeout = 15 * 60 * 1000; // 15 minutes
-const int debounceTime = 300;               // 300ms
 const int doorButtonPressTime = 500;        // 500ms
+//const int consistentReadDelay = 200;
+//const int consistentReadsRequired = 4;
+const int pollPeriod = 100; // Keep it short so we don't interfere with OTA update poll
 
 byte doorState = DOOR_UNKNOWN;
-volatile bool closePinTriggered = false;
-volatile bool openPinTriggered = false;
 unsigned long lastDoorMoveTime = millis();
+
+int closePinState = 1;
+int openPinState = 1;
 
 TheShed* shedWifi;
 
@@ -88,19 +91,14 @@ void setup() {
   pinMode(activatePin, OUTPUT);
   digitalWrite(activatePin, HIGH);
 
-  // Can't attach two interrupts (one rising, one falling) to the same pin :(
-  // https://forum.arduino.cc/index.php?topic=147825.0
-  attachInterrupt(digitalPinToInterrupt(closePin), closeChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(openPin), openChange, CHANGE);
-
   // Read initial state
-  int oPin = digitalRead(openPin);
-  int cPin = digitalRead(closePin);
+  openPinState = digitalRead(openPin);
+  closePinState = digitalRead(closePin);
   // One of these pins needs to be "closed" (0)
   // A zero is boolean false, so !oPin means if the openPin is currently "active" (actually open)
-  if(!oPin) {
+  if(!openPinState) {
     doorState = DOOR_OPEN;
-  } else if (!cPin) {
+  } else if (!closePinState) {
     doorState = DOOR_CLOSED;
   } else {
     doorState = DOOR_UNKNOWN;
@@ -108,6 +106,11 @@ void setup() {
 
   Serial.print("Start up door state: ");
   Serial.println(doorStates[doorState]);
+  /*
+  char payload[50];
+  sprintf(payload, "init - closePin: %d   openPin: %d", closePinState, openPinState);
+  shedWifi->publishToMqtt("home/garage/debug", payload);
+  */
 }
 
  /*
@@ -124,36 +127,76 @@ void loop() {
   ArduinoOTA.handle();
   shedWifi->mqttLoop();
 
-  if(closePinTriggered) {
-    // Debounce delay
-    delay(debounceTime);
-    
-    // Now contact has settled read current state
-    int pinState = digitalRead(closePin);
-    
-    // If pin is 1 then it was a rising transition
-    // If it has a value (1) then it will evaluate to true
-    // If closePin rising then state is opening, else closed
-    doorState = pinState ? DOOR_OPENING : DOOR_CLOSED;
-    closePinTriggered = false;
-    lastDoorMoveTime = millis();
-    sendDoorState();
-  }
+  /*
+   * Even with the 10K pullup resistors, the fluoro lights switching on and off introduce enough
+   * noise on the lines to trigger the interrupt routines (and false positives).
+   * 
+   * We can't use interrupts :(
+   * https://github.com/esp8266/Arduino/issues/1372
+   * 
+   * Instead let's poll periodically.
+   */
 
-  if(openPinTriggered) {
-    // Debounce delay
-    delay(debounceTime);
+  int newClosePinState = digitalRead(closePin);
+  int newOpenPinState = digitalRead(openPin);
+
+  // If we detect a change in pin state
+  if(newOpenPinState != openPinState || newClosePinState != closePinState) {
     
-    // Now contact has settled read current state
-    int pinState = digitalRead(openPin);
+    /*
+    shedWifi->publishToMqtt("home/garage/debug", "Detected pin change");
+    int consistentReads = 0;
+    do {
+      // Check a few times to ensure we have a consistent reading on the pins
+      delay(consistentReadDelay);
+      int tempClosePinState = digitalRead(closePin);
+      int tempOpenPinState = digitalRead(openPin);
+
+      if(tempClosePinState == newClosePinState && tempOpenPinState == newOpenPinState) {
+        consistentReads++;
+      } else {
+        newClosePinState = tempClosePinState;
+        newOpenPinState = tempOpenPinState;
+        consistentReads = 0;
+      }
+    } while(consistentReads < consistentReadsRequired); 
     
-    // If pin is 1 then it was a rising transition
-    // If it has a value (1) then it will evaluate to true
-    // If openPin rising then state is closing, else open
-    doorState = pinState ? DOOR_CLOSING : DOOR_OPEN;
-    openPinTriggered = false;
-    lastDoorMoveTime = millis();
-    sendDoorState();
+    // We have a consistent idea of the pin state, now adjust door state
+    char payload[50];
+    sprintf(payload, "change - closePin: %d   openPin: %d", newClosePinState, newOpenPinState);
+    shedWifi->publishToMqtt("home/garage/debug", payload);
+    */
+    
+    // If the pins haven't actually changed state, we just had a false positive pin change
+    if(openPinState == newOpenPinState && closePinState == newClosePinState) {
+      return;
+    }
+    // if the open pin changed but close pin did not
+    else if(openPinState != newOpenPinState && closePinState == newClosePinState) {
+      // If pin is 1 then it was a rising transition
+      // If it has a value (1) then it will evaluate to true
+      // If openPin rising then state is closing, else open
+      doorState = newOpenPinState ? DOOR_CLOSING : DOOR_OPEN;
+      lastDoorMoveTime = millis();
+      sendDoorState();
+    }
+    // Or if the close pin changed but open pin did not
+    else if (closePinState != newClosePinState && openPinState == newOpenPinState) {
+      // If pin is 1 then it was a rising transition
+      // If it has a value (1) then it will evaluate to true
+      // If closePin rising then state is opening, else closed
+      doorState = newClosePinState ? DOOR_OPENING : DOOR_CLOSED;
+      lastDoorMoveTime = millis();
+      sendDoorState();
+    }
+    // Otherwise two pins changed and we are unknown
+    else {
+      doorState = 0;
+      sendDoorState();
+    }
+    
+    openPinState = newOpenPinState;
+    closePinState = newClosePinState;
   }
  
    // If the door was moving, and the time elapsed is greater than our timeout
@@ -171,6 +214,8 @@ void loop() {
     doorState = 5;
     sendDoorState();
   }
+
+  delay(pollPeriod);
 }
 
 void closeDoor() {
@@ -223,15 +268,4 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   } else {
     Serial.println("Received unknown command"); 
   }
-}
-
-// Had error "ISR not in IRAM!" during execution after upgrading ESP Core
-// Need to add ICACHE_RAM_ATTR before function as per this page:
-// https://community.blynk.cc/t/error-isr-not-in-iram/37426/13
-ICACHE_RAM_ATTR void closeChange() {
-  closePinTriggered = true;
-}
-
-ICACHE_RAM_ATTR void openChange() {
-  openPinTriggered = true;
 }
