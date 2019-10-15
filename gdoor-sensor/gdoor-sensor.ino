@@ -33,24 +33,16 @@
  * 
  * Good tutorial on external interrupt pins
  * https://techtutorialsx.com/2016/12/11/esp8266-external-interrupts/
- * 
- * Door states
- * 0 - Unknown
- * 1 - Open
- * 2 - Closed
- * 3 - Opening
- * 4 - Closing
- * 5 - Alert open
  */
 
-const byte DOOR_UNKNOWN = 0;
-const byte DOOR_OPEN = 1;
-const byte DOOR_CLOSED = 2;
-const byte DOOR_OPENING = 3;
-const byte DOOR_CLOSING = 4;
-const byte DOOR_ALERT = 5;
+const byte DOOR_OPEN = 0;
+const byte DOOR_CLOSED = 1;
+const byte DOOR_OPENING = 2;
+const byte DOOR_CLOSING = 3;
+const byte DOOR_ALERT = 4;
+const byte DOOR_UNKNOWN = 5;
 
-const char* doorStates[] = {"Unknown", "Open", "Closed", "Opening", "Closing", "ALERT OPEN"};
+const char* doorStates[] = {"Open", "Closed", "Opening", "Closing", "ALERT OPEN", "Unknown"};
 
 const byte activatePin = D0;
 const byte openPin = D1;
@@ -64,8 +56,6 @@ const char wifiHostname[] = "gdoor-sensor";
 const int doorMovingTimeout = 60 * 1000;    // 1 minute
 const int doorOpenTimeout = 15 * 60 * 1000; // 15 minutes
 const int doorButtonPressTime = 500;        // 500ms
-//const int consistentReadDelay = 200;
-//const int consistentReadsRequired = 4;
 const int pollPeriod = 100; // Keep it short so we don't interfere with OTA update poll
 
 byte doorState = DOOR_UNKNOWN;
@@ -95,7 +85,8 @@ void setup() {
   openPinState = digitalRead(openPin);
   closePinState = digitalRead(closePin);
   // One of these pins needs to be "closed" (0)
-  // A zero is boolean false, so !oPin means if the openPin is currently "active" (actually open)
+  // Inputs are active-low (with pullup resistors)
+  // A zero is boolean false, so !oPin means the openPin is currently "active" (and the door is open)
   if(!openPinState) {
     doorState = DOOR_OPEN;
   } else if (!closePinState) {
@@ -191,7 +182,7 @@ void loop() {
     }
     // Otherwise two pins changed and we are unknown
     else {
-      doorState = 0;
+      doorState = DOOR_UNKNOWN;
       sendDoorState();
     }
     
@@ -204,21 +195,21 @@ void loop() {
     Serial.print("Door did not finish moving, last seen it was ");
     Serial.println(doorStates[doorState]);
     Serial.println("Changing state to unknown");
-    doorState = 0;
+    doorState = DOOR_UNKNOWN;
     sendDoorState();
   }
 
   // If the door is open or unknown, and the time elapsed is greater than our timeout
   if((doorState == DOOR_OPEN || doorState == DOOR_UNKNOWN) && (millis() - lastDoorMoveTime > doorOpenTimeout)) {
     Serial.print("ALERT -- Door is left open");
-    doorState = 5;
+    doorState = DOOR_ALERT;
     sendDoorState();
   }
 
   delay(pollPeriod);
 }
 
-void closeDoor() {
+void pulseDoor() {
   digitalWrite(activatePin, LOW);
   delay(doorButtonPressTime);
   digitalWrite(activatePin, HIGH);
@@ -257,14 +248,26 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
 
   const char* name = doc["command"];
-  if (strcmp(name,"close") == 0) {
-    Serial.println("Received close command");
-    if(doorState != DOOR_CLOSED) {
-      closeDoor();
-    }
-  } else if (strcmp(name, "query") == 0) {
+  if (strcmp(name, "query") == 0) {
     Serial.println("Received query command");
     sendDoorState();
+  } else if (strcmp(name,"close") == 0) {
+    Serial.println("Received close command");
+    // Don't act on command if door is closed, closing or opening.
+    if(doorState == DOOR_OPEN || doorState == DOOR_ALERT || doorState == DOOR_UNKNOWN) {
+      pulseDoor();
+    }
+  } else if (strcmp(name,"open") == 0) {
+    Serial.println("Received open command");
+    // Don't act on command if door is open, opening or closing.
+    if(doorState == DOOR_CLOSED || doorState == DOOR_ALERT || doorState == DOOR_UNKNOWN) {
+      pulseDoor();
+    }
+  }
+  // DEBUG COMMAND
+  else if (strcmp(name,"pulse") == 0) {
+    Serial.println("Received pulse command");
+    pulseDoor();
   } else {
     Serial.println("Received unknown command"); 
   }
