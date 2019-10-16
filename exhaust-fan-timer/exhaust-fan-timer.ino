@@ -11,8 +11,8 @@ const char mqttPubTopic[] = "home/main-toilet/fan-status";
 const char mqttSubTopic[] = "home/main-toilet/fan-control";
 const char wifiHostname[] = "main-toilet-fan";
 
-const int defaultFanDuration = 60; // 15 minutes
-const int pollPeriod = 250; // Keep it short so we don't interfere with OTA update poll
+const int defaultFanDuration = 900; // 15 minutes
+const int pollPeriod = 100; // Keep it short so we don't interfere with OTA update poll
 
 TheShed* shedWifi;
 
@@ -44,14 +44,6 @@ void loop() {
     setFan(false);
   }
 
-  // debug print remaining time
-  if(fanState)
-  {
-    char payload[60];
-    sprintf(payload, "Remaining: %d", getRemainingSeconds());
-    Serial.println(payload);
-  }
-  
   delay(pollPeriod);
 }
 
