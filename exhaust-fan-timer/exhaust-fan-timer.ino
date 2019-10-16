@@ -11,8 +11,8 @@ const char mqttPubTopic[] = "home/main-toilet/fan-status";
 const char mqttSubTopic[] = "home/main-toilet/fan-control";
 const char wifiHostname[] = "main-toilet-fan";
 
-const int defaultFanDuration = 900 * 1000; // 15 minutes
-const int pollPeriod = 100; // Keep it short so we don't interfere with OTA update poll
+const int defaultFanDuration = 60; // 15 minutes
+const int pollPeriod = 250; // Keep it short so we don't interfere with OTA update poll
 
 TheShed* shedWifi;
 
@@ -40,11 +40,27 @@ void loop() {
   ArduinoOTA.handle();
   shedWifi->mqttLoop();
 
-  if(fanState && (millis() - fanStartTime > fanDuration)) {
+  if(fanState && getRemainingSeconds() <= 0) {
     setFan(false);
   }
 
+  // debug print remaining time
+  if(fanState)
+  {
+    char payload[60];
+    sprintf(payload, "Remaining: %d", getRemainingSeconds());
+    Serial.println(payload);
+  }
+  
   delay(pollPeriod);
+}
+
+int getRemainingSeconds()
+{
+  if(!fanState)
+    return 0;
+
+  return (fanDuration - millis() + fanStartTime)/1000;
 }
 
 void setFan(bool state) {
@@ -56,7 +72,7 @@ void setFan(bool state, int duration) {
   digitalWrite(relayPin, state ? HIGH : LOW);
 
   if(state) {
-    fanDuration = duration;
+    fanDuration = duration*1000;
     fanStartTime = millis();
   }
 
@@ -72,7 +88,7 @@ void sendFanState() {
 
   // Send payload
   char payload[60];
-  sprintf(payload, "{\"state\":%s, \"description\":\"%s\", \"duration\":%d}", fanState?"true":"false", fanState?"on":"off", fanDuration/1000);
+  sprintf(payload, "{\"state\":%s, \"description\":\"%s\", \"remaining\":%d}", fanState?"true":"false", fanState?"on":"off", getRemainingSeconds());
   
   shedWifi->publishToMqtt(mqttPubTopic, payload);
 }
@@ -99,5 +115,25 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (strcmp(name, "query") == 0) {
     Serial.println("Received query command");
     sendFanState();
+    return;
+  }
+
+  if (strcmp(name, "off") == 0) {
+    Serial.println("Received off command");
+    setFan(false);
+    return;
+  }
+
+  if (strcmp(name, "on") == 0) {
+    Serial.println("Received on command");
+    int commandDuration = doc["duration"];
+    // If value is missing then it will return 0
+
+    Serial.println(commandDuration);
+    if(commandDuration > 0)
+      setFan(true, commandDuration);
+    else
+      setFan(true);
+    return;
   }
 }
